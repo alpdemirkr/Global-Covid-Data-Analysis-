@@ -1,0 +1,82 @@
+ 7-Day Rolling Average of New Cases
+
+SELECT 
+  location,
+  date,
+  new_cases,
+  AVG(new_cases) OVER (
+    PARTITION BY location 
+    ORDER BY date 
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+  ) AS rolling_avg_new_cases
+FROM PortfolioProject..CovidDeaths
+WHERE continent IS NOT NULL;
+
+
+2. Daily Growth Rate of Total Cases
+
+SELECT 
+  location,
+  date,
+  total_cases,
+  LAG(total_cases, 1) OVER (PARTITION BY location ORDER BY date) AS previous_day_cases,
+  (total_cases - LAG(total_cases, 1) OVER (PARTITION BY location ORDER BY date)) * 1.0 /
+    NULLIF(LAG(total_cases, 1) OVER (PARTITION BY location ORDER BY date), 0) * 100 AS daily_growth_rate
+FROM PortfolioProject..CovidDeaths
+WHERE continent IS NOT NULL;
+
+
+3. Vaccination Trend vs Case Trend (Weekly Case Change)
+WITH VaxTrend AS (
+  SELECT 
+    dea.location,
+    dea.date,
+    new_cases,
+    vac.new_vaccinations,
+    SUM(CAST(vac.new_vaccinations AS INT)) 
+      OVER (PARTITION BY dea.location ORDER BY dea.date) AS cumulative_vax
+  FROM PortfolioProject..CovidDeaths dea
+  JOIN PortfolioProject..CovidVaccinations vac
+    ON dea.location = vac.location AND dea.date = vac.date
+  WHERE dea.continent IS NOT NULL
+)
+SELECT *,
+  LAG(new_cases, 7) OVER (PARTITION BY location ORDER BY date) AS new_cases_last_week,
+  (new_cases - LAG(new_cases, 7) OVER (PARTITION BY location ORDER BY date)) AS case_change_weekly
+FROM VaxTrend;
+
+
+4. Deaths Per 100k People by Continent
+SELECT 
+  continent,
+  SUM(total_deaths) AS total_deaths,
+  SUM(population) AS total_population,
+  SUM(total_deaths) * 100000.0 / SUM(population) AS deaths_per_100k
+FROM PortfolioProject..CovidDeaths
+WHERE continent IS NOT NULL
+GROUP BY continent
+ORDER BY deaths_per_100k DESC;
+
+
+5. Detecting Anomalies: Sudden Spikes in Daily New Cases
+WITH CaseTrend AS (
+  SELECT 
+    location,
+    date,
+    new_cases,
+    AVG(new_cases) OVER (
+      PARTITION BY location 
+      ORDER BY date 
+      ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) AS rolling_avg,
+    new_cases - AVG(new_cases) OVER (
+      PARTITION BY location 
+      ORDER BY date 
+      ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) AS deviation
+  FROM PortfolioProject..CovidDeaths
+)
+SELECT * 
+FROM CaseTrend
+WHERE deviation > 2 * rolling_avg
+ORDER BY location, date;
